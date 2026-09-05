@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+
+data/raw/*
+data/processed/*
+!data/processed/
+!data/processed/glorys_bob_2020-01-15_025deg.nc
+
+data/samples/*
+!.gitkeep

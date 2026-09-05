@@ -1,0 +1,14 @@
+numpy
+pandas
+xarray
+netCDF4
+h5netcdf
+scipy
+matplotlib
+torch
+tqdm
+copernicusmarine
+dask
+zarr
+streamlit
+plotly
