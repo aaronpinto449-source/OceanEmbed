@@ -4,11 +4,11 @@ import copernicusmarine
 
 
 # ---------------------------------------------------------
-# OceanEmbed - GLORYS downloader
+# OceanEmbed - Wind downloader
 # ---------------------------------------------------------
 
 parser = argparse.ArgumentParser(
-    description="Download GLORYS data for OceanEmbed"
+    description="Download daily wind data for OceanEmbed"
 )
 
 parser.add_argument("--lon-min", type=float, required=True)
@@ -28,7 +28,7 @@ args = parser.parse_args()
 # Configuration
 # ---------------------------------------------------------
 
-DATASET_ID = "cmems_mod_glo_phy_my_0.083deg_P1D-m"
+DATASET_ID = "cmems_obs-wind_glo_phy_my_l4_0.125deg_PT1H"
 
 OUT_FILE = Path(args.output)
 OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -47,7 +47,7 @@ if OUT_FILE.exists():
 # Download
 # ---------------------------------------------------------
 
-print("Downloading GLORYS...")
+print("Downloading wind...")
 print(f"Date: {args.start}")
 print(
     f"Region: "
@@ -59,11 +59,8 @@ copernicusmarine.subset(
     dataset_id=DATASET_ID,
 
     variables=[
-        "thetao",
-        "so",
-        "uo",
-        "vo",
-        "zos",
+        "eastward_wind",
+        "northward_wind",
     ],
 
     minimum_longitude=args.lon_min,
@@ -73,10 +70,7 @@ copernicusmarine.subset(
     maximum_latitude=args.lat_max,
 
     start_datetime=f"{args.start}T00:00:00",
-    end_datetime=f"{args.end}T00:00:00",
-
-    minimum_depth=0,
-    maximum_depth=1000,
+    end_datetime=f"{args.end}T23:00:00",
 
     coordinates_selection_method="outside",
 
@@ -87,6 +81,6 @@ copernicusmarine.subset(
 
 print()
 print("========================================")
-print("GLORYS DOWNLOAD COMPLETE")
+print("WIND DOWNLOAD COMPLETE")
 print("========================================")
 print(f"Saved: {OUT_FILE}")

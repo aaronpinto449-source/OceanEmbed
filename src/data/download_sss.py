@@ -4,11 +4,11 @@ import copernicusmarine
 
 
 # ---------------------------------------------------------
-# OceanEmbed - GLORYS downloader
+# OceanEmbed - SSS downloader
 # ---------------------------------------------------------
 
 parser = argparse.ArgumentParser(
-    description="Download GLORYS data for OceanEmbed"
+    description="Download SSS data for OceanEmbed"
 )
 
 parser.add_argument("--lon-min", type=float, required=True)
@@ -28,7 +28,7 @@ args = parser.parse_args()
 # Configuration
 # ---------------------------------------------------------
 
-DATASET_ID = "cmems_mod_glo_phy_my_0.083deg_P1D-m"
+DATASET_ID = "cmems_obs-mob_glo_phy-sss_my_multi_P1D"
 
 OUT_FILE = Path(args.output)
 OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -47,7 +47,7 @@ if OUT_FILE.exists():
 # Download
 # ---------------------------------------------------------
 
-print("Downloading GLORYS...")
+print("Downloading SSS...")
 print(f"Date: {args.start}")
 print(
     f"Region: "
@@ -57,14 +57,7 @@ print(
 
 copernicusmarine.subset(
     dataset_id=DATASET_ID,
-
-    variables=[
-        "thetao",
-        "so",
-        "uo",
-        "vo",
-        "zos",
-    ],
+    variables=["sos"],
 
     minimum_longitude=args.lon_min,
     maximum_longitude=args.lon_max,
@@ -75,18 +68,14 @@ copernicusmarine.subset(
     start_datetime=f"{args.start}T00:00:00",
     end_datetime=f"{args.end}T00:00:00",
 
-    minimum_depth=0,
-    maximum_depth=1000,
-
     coordinates_selection_method="outside",
 
     output_filename=OUT_FILE.name,
     output_directory=str(OUT_FILE.parent),
 )
 
-
 print()
 print("========================================")
-print("GLORYS DOWNLOAD COMPLETE")
+print("SSS DOWNLOAD COMPLETE")
 print("========================================")
 print(f"Saved: {OUT_FILE}")
