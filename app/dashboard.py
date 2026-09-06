@@ -26,6 +26,10 @@ PREDICTION_FILE = (
     "data/processed/"
     "oceanembed_prediction_depthbaseline_4days.nc"
 )
+INPUT_FILE = (
+    "data/processed/"
+    "oceanembed_dashboard_inputs_4days.nc"
+)
 
 ARGO_FILE = (
     "data/processed/"
@@ -58,7 +62,12 @@ def load_prediction():
     return xr.open_dataset(
         PREDICTION_FILE
     )
+@st.cache_data
+def load_inputs():
 
+    return xr.open_dataset(
+        INPUT_FILE
+    )
 
 @st.cache_data
 def load_argo():
@@ -85,6 +94,7 @@ def load_argo_profiles():
 
 
 prediction = load_prediction()
+inputs = load_inputs()
 argo = load_argo()
 argo_depth = load_argo_depth()
 argo_profiles = load_argo_profiles()
@@ -513,43 +523,223 @@ st.header(
 )
 
 st.caption(
-    "Seven surface variables used by the reconstruction model"
+    "The seven surface fields supplied to the OceanEmbed "
+    "reconstruction model"
 )
 
 
-input_columns = [
-    ("SST", "Sea Surface Temperature"),
-    ("SSS", "Sea Surface Salinity"),
-    ("SSH", "Sea Surface Height"),
-    ("u_current", "Surface Zonal Current"),
-    ("v_current", "Surface Meridional Current"),
-    ("u_wind", "Zonal Wind"),
-    ("v_wind", "Meridional Wind"),
+# ------------------------------------------------------------
+# Select the same date as the reconstruction explorer
+# ------------------------------------------------------------
+
+input_day = inputs.sel(
+    time=np.datetime64(selected_date)
+)
+
+
+input_definitions = [
+    (
+        "sst",
+        "Sea Surface Temperature",
+        "°C",
+        "Turbo"
+    ),
+    (
+        "sss",
+        "Sea Surface Salinity",
+        "PSU",
+        "Viridis"
+    ),
+    (
+        "ssh",
+        "Sea Surface Height",
+        "m",
+        "RdBu_r"
+    ),
+    (
+        "u_current",
+        "Zonal Surface Current",
+        "m/s",
+        "RdBu_r"
+    ),
+    (
+        "v_current",
+        "Meridional Surface Current",
+        "m/s",
+        "RdBu_r"
+    ),
+    (
+        "u_wind",
+        "Zonal Surface Wind",
+        "m/s",
+        "RdBu_r"
+    ),
+    (
+        "v_wind",
+        "Meridional Surface Wind",
+        "m/s",
+        "RdBu_r"
+    ),
 ]
 
 
-cols = st.columns(4)
-
-
-# The prediction file contains only model outputs.
-# Therefore we describe the seven model inputs here rather
-# than pretending they are present in the validation file.
-
-for i, (short, name) in enumerate(
-    input_columns
+def make_input_map(
+    values,
+    title,
+    units,
+    colorscale,
+    symmetric=False
 ):
 
-    with cols[i % 4]:
+    values = np.asarray(
+        values,
+        dtype=float
+    )
 
-        st.markdown(
-            f"**{short}**"
+    finite = np.isfinite(values)
+
+    if not np.any(finite):
+
+        zmin = None
+        zmax = None
+
+    elif symmetric:
+
+        limit = float(
+            np.nanmax(
+                np.abs(values[finite])
+            )
         )
 
-        st.caption(
-            name
+        zmin = -limit
+        zmax = limit
+
+    else:
+
+        zmin = float(
+            np.nanpercentile(
+                values[finite],
+                2
+            )
+        )
+
+        zmax = float(
+            np.nanpercentile(
+                values[finite],
+                98
+            )
+        )
+
+    fig = go.Figure(
+        go.Heatmap(
+            x=inputs.longitude.values,
+            y=inputs.latitude.values,
+            z=values,
+            colorscale=colorscale,
+            zmin=zmin,
+            zmax=zmax,
+            colorbar=dict(
+                title=units
+            ),
+            hovertemplate=(
+                "Longitude: %{x:.2f}°E"
+                "<br>"
+                "Latitude: %{y:.2f}°N"
+                "<br>"
+                f"{title}: %{{z:.3f}} {units}"
+                "<extra></extra>"
+            )
+        )
+    )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Longitude",
+        yaxis_title="Latitude",
+        height=330,
+        margin=dict(
+            l=10,
+            r=10,
+            t=50,
+            b=10
+        )
+    )
+
+    return fig
+
+
+# ------------------------------------------------------------
+# First four inputs
+# ------------------------------------------------------------
+
+row1 = st.columns(4)
+
+
+for column, definition in zip(
+    row1,
+    input_definitions[:4]
+):
+
+    variable, title, units, colorscale = definition
+
+    with column:
+
+        st.plotly_chart(
+            make_input_map(
+                input_day[variable].values,
+                title,
+                units,
+                colorscale,
+                symmetric=variable in {
+                    "ssh",
+                    "u_current",
+                    "v_current",
+                    "u_wind",
+                    "v_wind"
+                }
+            ),
+            width="stretch"
         )
 
 
+# ------------------------------------------------------------
+# Remaining three inputs
+# ------------------------------------------------------------
+
+row2 = st.columns(4)
+
+
+for column, definition in zip(
+    row2[:3],
+    input_definitions[4:]
+):
+
+    variable, title, units, colorscale = definition
+
+    with column:
+
+        st.plotly_chart(
+            make_input_map(
+                input_day[variable].values,
+                title,
+                units,
+                colorscale,
+                symmetric=True
+            ),
+            width="stretch"
+        )
+
+
+st.info(
+    """
+These seven surface fields form the model input tensor:
+
+**[SST, SSS, SSH, U-current, V-current, U-wind, V-wind]**
+
+They are harmonized to the same 0.25° spatial grid and daily
+temporal resolution before being passed to the reconstruction model.
+"""
+)
 # ============================================================
 # INDEPENDENT ARGO VALIDATION
 # ============================================================
