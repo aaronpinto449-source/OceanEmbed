@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+sys.path.append(
+    str(Path(__file__).resolve().parent.parent)
+)
 import os
 
 import numpy as np
@@ -5,6 +11,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import xarray as xr
+import torch
+
+from src.models.oceanembed_cnn import OceanEmbedCNN
 
 
 # ============================================================
@@ -25,6 +34,9 @@ st.set_page_config(
 PREDICTION_FILE = (
     "data/processed/"
     "oceanembed_prediction_depthbaseline_4days.nc"
+)
+MODEL_FILE = (
+    "models/oceanembed_depthbaseline_30day.pt"
 )
 INPUT_FILE = (
     "data/processed/"
@@ -62,6 +74,8 @@ def load_prediction():
     return xr.open_dataset(
         PREDICTION_FILE
     )
+
+
 @st.cache_data
 def load_inputs():
 
@@ -69,6 +83,30 @@ def load_inputs():
         INPUT_FILE
     )
 
+
+@st.cache_resource
+def load_model():
+
+    checkpoint = torch.load(
+        MODEL_FILE,
+        map_location="cpu",
+        weights_only=False
+    )
+
+    model = OceanEmbedCNN(
+        in_channels=7,
+        out_channels=len(
+            checkpoint["target_depths"]
+        )
+    )
+
+    model.load_state_dict(
+        checkpoint["model_state_dict"]
+    )
+
+    model.eval()
+
+    return model, checkpoint
 @st.cache_data
 def load_argo():
 
@@ -95,9 +133,192 @@ def load_argo_profiles():
 
 prediction = load_prediction()
 inputs = load_inputs()
+
+model, checkpoint = load_model()
 argo = load_argo()
 argo_depth = load_argo_depth()
 argo_profiles = load_argo_profiles()
+
+def run_oceanembed_inference(
+    input_dataset,
+    selected_date,
+    model,
+    checkpoint
+):
+
+    variables = checkpoint[
+        "input_variables"
+    ]
+
+    input_means = np.asarray(
+        checkpoint["input_means"],
+        dtype=np.float32
+    )
+
+    input_stds = np.asarray(
+        checkpoint["input_stds"],
+        dtype=np.float32
+    )
+
+    target_means = np.asarray(
+        checkpoint["target_means"],
+        dtype=np.float32
+    )
+
+    target_stds = np.asarray(
+        checkpoint["target_stds"],
+        dtype=np.float32
+    )
+
+    target_depths = np.asarray(
+        checkpoint["target_depths"],
+        dtype=np.float32
+    )
+
+
+    # --------------------------------------------------------
+    # Extract the seven surface channels
+    # --------------------------------------------------------
+
+    day = input_dataset.sel(
+        time=np.datetime64(selected_date)
+    )
+
+    X = np.stack(
+        [
+            day[var].values
+            for var in variables
+        ],
+        axis=0
+    ).astype(np.float32)
+
+
+    # --------------------------------------------------------
+    # Normalize exactly as during training
+    # --------------------------------------------------------
+
+    X_normalized = (
+        X
+        - input_means[
+            :, None, None
+        ]
+    ) / input_stds[
+        :, None, None
+    ]
+
+
+    # --------------------------------------------------------
+    # Missing-value handling exactly as training
+    # --------------------------------------------------------
+
+    input_valid_mask = np.all(
+        np.isfinite(X),
+        axis=0
+    )
+
+    X_normalized = np.nan_to_num(
+        X_normalized,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0
+    ).astype(np.float32)
+
+
+    # --------------------------------------------------------
+    # Build depth-dependent baseline
+    #
+    # Same method used during training:
+    # climatological target mean at depth,
+    # with observed SST at 0 m.
+    # --------------------------------------------------------
+
+    baseline = np.broadcast_to(
+        target_means[
+            :, None, None
+        ],
+        (
+            len(target_depths),
+            X.shape[1],
+            X.shape[2]
+        )
+    ).copy()
+
+
+    # 0 m = observed SST
+
+    baseline[0] = X[0]
+
+
+    baseline_normalized = (
+        baseline
+        - target_means[
+            :, None, None
+        ]
+    ) / target_stds[
+        :, None, None
+    ]
+
+
+    baseline_normalized = np.nan_to_num(
+        baseline_normalized,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0
+    ).astype(np.float32)
+
+
+    # --------------------------------------------------------
+    # Convert to tensors
+    # --------------------------------------------------------
+
+    X_tensor = torch.from_numpy(
+        X_normalized
+    ).unsqueeze(0)
+
+    baseline_tensor = torch.from_numpy(
+        baseline_normalized
+    ).unsqueeze(0)
+
+
+    # --------------------------------------------------------
+    # Neural-network inference
+    # --------------------------------------------------------
+
+    with torch.no_grad():
+
+        prediction_normalized = model(
+            X_tensor,
+            baseline_tensor
+        )
+
+
+    prediction_normalized = (
+        prediction_normalized
+        .squeeze(0)
+        .cpu()
+        .numpy()
+    )
+
+
+    # --------------------------------------------------------
+    # Convert back to °C
+    # --------------------------------------------------------
+
+    prediction_celsius = (
+        prediction_normalized
+        * target_stds[
+            :, None, None
+        ]
+        + target_means[
+            :, None, None
+        ]
+    )
+
+
+    return (
+        prediction_celsius,
+        input_valid_mask
+    )
 
 
 # ============================================================
@@ -205,7 +426,26 @@ selected_lon = st.sidebar.slider(
     0.25
 )
 
+# ============================================================
+# LIVE MODEL INFERENCE
+# ============================================================
 
+with st.spinner(
+    "Running OceanEmbed neural-network reconstruction..."
+):
+
+    live_prediction, input_valid_mask = (
+        run_oceanembed_inference(
+            inputs,
+            selected_date,
+            model,
+            checkpoint
+        )
+    )
+st.success(
+    "✓ OceanEmbed CNN inference executed using "
+    "the selected seven surface input fields."
+)
 # ============================================================
 # SELECT DATA
 # ============================================================
@@ -219,16 +459,23 @@ field = day.sel(
 )
 
 
-pred_map = field[
-    "temperature_prediction"
-].values
+live_pred_map = live_prediction[
+    np.argmin(
+        np.abs(
+            prediction.depth.values
+            - selected_depth
+        )
+    )
+]
 
 ref_map = field[
     "temperature_reference"
 ].values
 
+pred_map = live_pred_map
+
 error_map = (
-    pred_map
+    live_pred_map
     - ref_map
 )
 
@@ -350,49 +597,52 @@ with m4:
 
 
 # ============================================================
-# TEMPERATURE MAPS
+# MAP HELPERS
 # ============================================================
+def make_map(values, title, colorscale, symmetric=False):
+    values = np.asarray(values, dtype=float)
 
-st.markdown("---")
+    if symmetric:
+        limit = 1.0
 
-st.header(
-    "Subsurface Temperature Reconstruction"
-)
-
-st.caption(
-    f"{selected_date.strftime('%Y-%m-%d')} • "
-    f"{int(selected_depth)} m depth"
-)
-
-
-map1, map2, map3 = st.columns(3)
-
-
-def make_map(
-    values,
-    title,
-    colorscale
-):
-
-    fig = go.Figure(
-        go.Heatmap(
-            x=longitudes,
-            y=latitudes,
-            z=values,
-            colorscale=colorscale,
-            colorbar=dict(
-                title="°C"
-            ),
-            hovertemplate=(
-                "Lon: %{x:.2f}°E"
-                "<br>"
-                "Lat: %{y:.2f}°N"
-                "<br>"
-                "Temperature: %{z:.2f}°C"
-                "<extra></extra>"
+        fig = go.Figure(
+            go.Heatmap(
+                x=longitudes,
+                y=latitudes,
+                z=values,
+                colorscale=colorscale,
+                zmin=-limit,
+                zmax=limit,
+                colorbar=dict(title="°C"),
+                hovertemplate=(
+                    "Lon: %{x:.2f}°E"
+                    "<br>"
+                    "Lat: %{y:.2f}°N"
+                    "<br>"
+                    f"{title}: %{{z:.3f}} °C"
+                    "<extra></extra>"
+                )
             )
         )
-    )
+
+    else:
+        fig = go.Figure(
+            go.Heatmap(
+                x=longitudes,
+                y=latitudes,
+                z=values,
+                colorscale=colorscale,
+                colorbar=dict(title="°C"),
+                hovertemplate=(
+                    "Lon: %{x:.2f}°E"
+                    "<br>"
+                    "Lat: %{y:.2f}°N"
+                    "<br>"
+                    f"{title}: %{{z:.3f}} °C"
+                    "<extra></extra>"
+                )
+            )
+        )
 
     fig.update_layout(
         title=title,
@@ -408,13 +658,173 @@ def make_map(
     )
 
     return fig
+# ============================================================
+# SURFACE OBSERVATION INPUTS
+# ============================================================
+
+st.markdown("---")
+
+st.header(
+    "Surface Observation Inputs"
+)
+
+st.caption(
+    f"Showing the seven surface observation fields for "
+    f"{selected_date.strftime('%Y-%m-%d')}"
+)
+
+
+# ------------------------------------------------------------
+# Select the exact input day used by the CNN
+# ------------------------------------------------------------
+
+input_day = inputs.sel(
+    time=np.datetime64(selected_date)
+)
+
+
+input_definitions = [
+    (
+        "sst",
+        "Sea Surface Temperature",
+        "°C",
+        "Turbo"
+    ),
+    (
+        "sss",
+        "Sea Surface Salinity",
+        "PSU",
+        "Viridis"
+    ),
+    (
+        "ssh",
+        "Sea Surface Height",
+        "m",
+        "RdBu_r"
+    ),
+    (
+        "u_current",
+        "Zonal Surface Current",
+        "m/s",
+        "RdBu_r"
+    ),
+    (
+        "v_current",
+        "Meridional Surface Current",
+        "m/s",
+        "RdBu_r"
+    ),
+    (
+        "u_wind",
+        "Zonal Surface Wind",
+        "m/s",
+        "RdBu_r"
+    ),
+    (
+        "v_wind",
+        "Meridional Surface Wind",
+        "m/s",
+        "RdBu_r"
+    ),
+]
+
+
+# ------------------------------------------------------------
+# First four input maps
+# ------------------------------------------------------------
+
+row1 = st.columns(4)
+
+for column, definition in zip(
+    row1,
+    input_definitions[:4]
+):
+
+    variable, title, units, colorscale = definition
+
+    with column:
+
+        st.plotly_chart(
+            make_input_map(
+                input_day[variable].values,
+                title,
+                units,
+                colorscale,
+                symmetric=variable in {
+                    "ssh",
+                    "u_current",
+                    "v_current",
+                    "u_wind",
+                    "v_wind"
+                }
+            ),
+            width="stretch"
+        )
+
+
+# ------------------------------------------------------------
+# Remaining three input maps
+# ------------------------------------------------------------
+
+row2 = st.columns(4)
+
+for column, definition in zip(
+    row2[:3],
+    input_definitions[4:]
+):
+
+    variable, title, units, colorscale = definition
+
+    with column:
+
+        st.plotly_chart(
+            make_input_map(
+                input_day[variable].values,
+                title,
+                units,
+                colorscale,
+                symmetric=True
+            ),
+            width="stretch"
+        )
+
+
+st.info(
+    """
+These seven surface fields form the model input tensor:
+
+**[SST, SSS, SSH, U-current, V-current, U-wind, V-wind]**
+
+They are harmonized to the same 0.25° spatial grid and daily
+temporal resolution before being passed to the reconstruction model.
+"""
+)
+
+
+# ============================================================
+# OCEANEMBED OUTPUT MAPS
+# ============================================================
+
+st.markdown("---")
+
+st.header(
+    "OceanEmbed Reconstruction"
+)
+
+st.caption(
+    f"{selected_date.strftime('%Y-%m-%d')} • "
+    f"{int(selected_depth)} m depth"
+)
+
+
+map1, map2, map3 = st.columns(3)
 
 
 with map1:
 
     st.plotly_chart(
         make_map(
-            pred_map,
+            live_pred_map,
             "OceanEmbed Prediction",
             "Turbo"
         ),
@@ -438,10 +848,11 @@ with map3:
 
     st.plotly_chart(
         make_map(
-            error_map,
-            "Reconstruction Error",
-            "RdBu_r"
-        ),
+    error_map,
+    "Reconstruction Error",
+    "RdBu_r",
+    symmetric=True
+),
         width="stretch"
     )
 
@@ -512,234 +923,6 @@ st.plotly_chart(
 )
 
 
-# ============================================================
-# 7 INPUT VARIABLES
-# ============================================================
-
-st.markdown("---")
-
-st.header(
-    "Surface Observation Inputs"
-)
-
-st.caption(
-    "The seven surface fields supplied to the OceanEmbed "
-    "reconstruction model"
-)
-
-
-# ------------------------------------------------------------
-# Select the same date as the reconstruction explorer
-# ------------------------------------------------------------
-
-input_day = inputs.sel(
-    time=np.datetime64(selected_date)
-)
-
-
-input_definitions = [
-    (
-        "sst",
-        "Sea Surface Temperature",
-        "°C",
-        "Turbo"
-    ),
-    (
-        "sss",
-        "Sea Surface Salinity",
-        "PSU",
-        "Viridis"
-    ),
-    (
-        "ssh",
-        "Sea Surface Height",
-        "m",
-        "RdBu_r"
-    ),
-    (
-        "u_current",
-        "Zonal Surface Current",
-        "m/s",
-        "RdBu_r"
-    ),
-    (
-        "v_current",
-        "Meridional Surface Current",
-        "m/s",
-        "RdBu_r"
-    ),
-    (
-        "u_wind",
-        "Zonal Surface Wind",
-        "m/s",
-        "RdBu_r"
-    ),
-    (
-        "v_wind",
-        "Meridional Surface Wind",
-        "m/s",
-        "RdBu_r"
-    ),
-]
-
-
-def make_input_map(
-    values,
-    title,
-    units,
-    colorscale,
-    symmetric=False
-):
-
-    values = np.asarray(
-        values,
-        dtype=float
-    )
-
-    finite = np.isfinite(values)
-
-    if not np.any(finite):
-
-        zmin = None
-        zmax = None
-
-    elif symmetric:
-
-        limit = float(
-            np.nanmax(
-                np.abs(values[finite])
-            )
-        )
-
-        zmin = -limit
-        zmax = limit
-
-    else:
-
-        zmin = float(
-            np.nanpercentile(
-                values[finite],
-                2
-            )
-        )
-
-        zmax = float(
-            np.nanpercentile(
-                values[finite],
-                98
-            )
-        )
-
-    fig = go.Figure(
-        go.Heatmap(
-            x=inputs.longitude.values,
-            y=inputs.latitude.values,
-            z=values,
-            colorscale=colorscale,
-            zmin=zmin,
-            zmax=zmax,
-            colorbar=dict(
-                title=units
-            ),
-            hovertemplate=(
-                "Longitude: %{x:.2f}°E"
-                "<br>"
-                "Latitude: %{y:.2f}°N"
-                "<br>"
-                f"{title}: %{{z:.3f}} {units}"
-                "<extra></extra>"
-            )
-        )
-    )
-
-    fig.update_layout(
-        title=title,
-        xaxis_title="Longitude",
-        yaxis_title="Latitude",
-        height=330,
-        margin=dict(
-            l=10,
-            r=10,
-            t=50,
-            b=10
-        )
-    )
-
-    return fig
-
-
-# ------------------------------------------------------------
-# First four inputs
-# ------------------------------------------------------------
-
-row1 = st.columns(4)
-
-
-for column, definition in zip(
-    row1,
-    input_definitions[:4]
-):
-
-    variable, title, units, colorscale = definition
-
-    with column:
-
-        st.plotly_chart(
-            make_input_map(
-                input_day[variable].values,
-                title,
-                units,
-                colorscale,
-                symmetric=variable in {
-                    "ssh",
-                    "u_current",
-                    "v_current",
-                    "u_wind",
-                    "v_wind"
-                }
-            ),
-            width="stretch"
-        )
-
-
-# ------------------------------------------------------------
-# Remaining three inputs
-# ------------------------------------------------------------
-
-row2 = st.columns(4)
-
-
-for column, definition in zip(
-    row2[:3],
-    input_definitions[4:]
-):
-
-    variable, title, units, colorscale = definition
-
-    with column:
-
-        st.plotly_chart(
-            make_input_map(
-                input_day[variable].values,
-                title,
-                units,
-                colorscale,
-                symmetric=True
-            ),
-            width="stretch"
-        )
-
-
-st.info(
-    """
-These seven surface fields form the model input tensor:
-
-**[SST, SSS, SSH, U-current, V-current, U-wind, V-wind]**
-
-They are harmonized to the same 0.25° spatial grid and daily
-temporal resolution before being passed to the reconstruction model.
-"""
-)
 # ============================================================
 # INDEPENDENT ARGO VALIDATION
 # ============================================================
