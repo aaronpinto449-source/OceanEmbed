@@ -538,6 +538,20 @@ if np.any(valid):
         )
     )
 
+    mae = float(
+        np.mean(
+            np.abs(error_map[valid])
+        )
+    )
+
+    valid_pixels = int(np.sum(valid))
+    total_pixels = int(valid.size)
+    coverage = (
+        100.0 * valid_pixels / total_pixels
+        if total_pixels > 0
+        else 0.0
+    )
+
     bias = float(
         np.mean(
             error_map[valid]
@@ -571,20 +585,20 @@ m1, m2, m3, m4 = st.columns(4)
 
 with m1:
     st.metric(
-        "Depth",
-        f"{int(selected_depth)} m"
+        "RMSE",
+        f"{rmse:.3f} C"
     )
 
 with m2:
     st.metric(
-        "RMSE",
-        f"{rmse:.3f} °C"
+        "MAE",
+        f"{mae:.3f} C"
     )
 
 with m3:
     st.metric(
         "Bias",
-        f"{bias:+.3f} °C"
+        f"{bias:+.3f} C"
     )
 
 with m4:
@@ -594,6 +608,11 @@ with m4:
         if np.isfinite(corr)
         else "N/A"
     )
+
+st.caption(
+    f"Validation coverage: {valid_pixels:,} / {total_pixels:,} "
+    f"valid pixels ({coverage:.1f}%) at {int(selected_depth)} m depth."
+)
 
 
 # ============================================================
