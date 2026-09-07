@@ -33,14 +33,14 @@ st.set_page_config(
 
 PREDICTION_FILE = (
     "data/processed/"
-    "oceanembed_prediction_depthbaseline_4days.nc"
+    "oceanembed_prediction_depthbaseline_30days.nc"
 )
 MODEL_FILE = (
     "models/oceanembed_depthbaseline_30day.pt"
 )
 INPUT_FILE = (
     "data/processed/"
-    "oceanembed_dashboard_inputs_4days.nc"
+    "oceanembed_dashboard_inputs_30days.nc"
 )
 
 ARGO_FILE = (

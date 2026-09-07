@@ -6,7 +6,7 @@ SOURCE = "data/processed/oceanembed_training_30days.nc"
 
 OUTPUT = (
     "data/processed/"
-    "oceanembed_dashboard_inputs_4days.nc"
+    "oceanembed_dashboard_inputs_30days.nc"
 )
 
 
@@ -21,16 +21,8 @@ INPUT_VARIABLES = [
 ]
 
 
-TEST_DATES = [
-    "2020-01-27",
-    "2020-01-28",
-    "2020-01-29",
-    "2020-01-30",
-]
-
-
 print("=" * 65)
-print("PREPARING OCEANEMBED DASHBOARD INPUT DATA")
+print("PREPARING OCEANEMBED 30-DAY DASHBOARD INPUT DATA")
 print("=" * 65)
 
 
@@ -41,9 +33,7 @@ ds = xr.open_dataset(
 
 dashboard = ds[
     INPUT_VARIABLES
-].sel(
-    time=TEST_DATES
-)
+]
 
 
 dashboard.attrs.update({
@@ -55,7 +45,7 @@ dashboard.attrs.update({
         "U wind, V wind"
     ),
     "resolution": "0.25 degree",
-    "dates": "2020-01-27 to 2020-01-30",
+    "dates": "2020-01-01 to 2020-01-30",
 })
 
 
