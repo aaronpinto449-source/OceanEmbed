@@ -69,7 +69,7 @@ ARGO_FIGURE = (
 # ============================================================
 
 @st.cache_data
-def load_prediction():
+def load_prediction_30day():
 
     return xr.open_dataset(
         PREDICTION_FILE
@@ -131,7 +131,7 @@ def load_argo_profiles():
     )
 
 
-prediction = load_prediction()
+prediction = load_prediction_30day()
 inputs = load_inputs()
 
 model, checkpoint = load_model()
