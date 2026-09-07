@@ -658,6 +658,60 @@ def make_map(values, title, colorscale, symmetric=False):
     )
 
     return fig
+
+
+def make_input_map(values, title, units, colorscale, symmetric=False):
+    values = np.asarray(values, dtype=float)
+    finite = np.isfinite(values)
+
+    if not np.any(finite):
+        zmin = None
+        zmax = None
+    elif symmetric:
+        limit = float(np.nanmax(np.abs(values[finite])))
+        limit = max(limit, 1.0)
+        zmin = -limit
+        zmax = limit
+    else:
+        zmin = float(np.nanpercentile(values[finite], 2))
+        zmax = float(np.nanpercentile(values[finite], 98))
+
+    fig = go.Figure(
+        go.Heatmap(
+            x=longitudes,
+            y=latitudes,
+            z=values,
+            colorscale=colorscale,
+            zmin=zmin,
+            zmax=zmax,
+            colorbar=dict(title=units),
+            hovertemplate=(
+                "Longitude: %{x:.2f}"
+                "<br>"
+                "Latitude: %{y:.2f}"
+                "<br>"
+                f"{title}: %{{z:.3f}} {units}"
+                "<extra></extra>"
+            )
+        )
+    )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Longitude",
+        yaxis_title="Latitude",
+        height=330,
+        margin=dict(
+            l=10,
+            r=10,
+            t=50,
+            b=10
+        )
+    )
+
+    return fig
+
+
 # ============================================================
 # SURFACE OBSERVATION INPUTS
 # ============================================================
