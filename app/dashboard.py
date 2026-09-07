@@ -928,7 +928,183 @@ with map3:
 ),
         width="stretch"
     )
+# ============================================================
+# 3D OCEAN RECONSTRUCTION
+# ============================================================
 
+st.markdown("---")
+
+st.header(
+    "3D Ocean Reconstruction"
+)
+
+st.caption(
+    f"Interactive temperature volume • "
+    f"{selected_date.strftime('%Y-%m-%d')}"
+)
+
+view_mode = st.radio(
+    "3D View",
+    [
+        "OceanEmbed Prediction",
+        "GLORYS Reference",
+        "Reconstruction Error"
+    ],
+    horizontal=True,
+    key="3d_view_mode"
+)
+
+max_depth_3d = st.select_slider(
+    "Maximum Depth",
+    options=[int(d) for d in depths],
+    value=int(depths[-1]),
+    key="3d_max_depth"
+)
+
+depth_mask = depths <= max_depth_3d
+
+depth_3d = depths[depth_mask]
+
+prediction_3d = live_prediction[
+    depth_mask
+]
+
+reference_3d = day[
+    "temperature_reference"
+].values[
+    depth_mask
+]
+
+if view_mode == "OceanEmbed Prediction":
+
+    volume_3d = prediction_3d
+    colorscale_3d = "Turbo"
+    title_3d = "OceanEmbed Temperature Reconstruction"
+    colorbar_title = "Temperature (°C)"
+
+elif view_mode == "GLORYS Reference":
+
+    volume_3d = reference_3d
+    colorscale_3d = "Turbo"
+    title_3d = "GLORYS Reference Temperature"
+    colorbar_title = "Temperature (°C)"
+
+else:
+
+    volume_3d = (
+        prediction_3d
+        - reference_3d
+    )
+
+    colorscale_3d = "RdBu_r"
+    title_3d = "OceanEmbed Reconstruction Error"
+    colorbar_title = "Error (°C)"
+
+
+depth_grid, lat_grid, lon_grid = np.meshgrid(
+    depth_3d,
+    latitudes,
+    longitudes,
+    indexing="ij"
+)
+
+finite_3d = np.isfinite(volume_3d)
+
+if np.any(finite_3d):
+
+    if view_mode == "Reconstruction Error":
+
+        error_limit = float(
+            np.nanpercentile(
+                np.abs(volume_3d[finite_3d]),
+                98
+            )
+        )
+
+        error_limit = max(
+            error_limit,
+            0.05
+        )
+
+        zmin_3d = -error_limit
+        zmax_3d = error_limit
+
+    else:
+
+        zmin_3d = float(
+            np.nanpercentile(
+                volume_3d[finite_3d],
+                2
+            )
+        )
+
+        zmax_3d = float(
+            np.nanpercentile(
+                volume_3d[finite_3d],
+                98
+            )
+        )
+
+else:
+
+    zmin_3d = None
+    zmax_3d = None
+
+
+fig_3d = go.Figure(
+    data=go.Isosurface(
+        x=lon_grid.flatten(),
+        y=lat_grid.flatten(),
+        z=depth_grid.flatten(),
+        value=volume_3d.flatten(),
+        isomin=zmin_3d,
+        isomax=zmax_3d,
+        surface_count=8,
+        colorscale=colorscale_3d,
+        cmin=zmin_3d,
+        cmax=zmax_3d,
+        colorbar=dict(
+            title=colorbar_title
+        ),
+        caps=dict(
+            x_show=False,
+            y_show=False,
+            z_show=False
+        ),
+        hovertemplate=(
+            "Longitude: %{x:.2f}°"
+            "<br>Latitude: %{y:.2f}°"
+            "<br>Depth: %{z:.0f} m"
+            "<br>Value: %{value:.3f}"
+            "<extra></extra>"
+        )
+    )
+)
+
+fig_3d.update_layout(
+    title=title_3d,
+    height=700,
+    margin=dict(
+        l=0,
+        r=0,
+        t=50,
+        b=0
+    ),
+    scene=dict(
+        xaxis_title="Longitude",
+        yaxis_title="Latitude",
+        zaxis_title="Depth (m)",
+        zaxis=dict(
+            autorange="reversed"
+        )
+    )
+)
+
+st.plotly_chart(
+    fig_3d,
+    width="stretch",
+    key=f"ocean_3d_{selected_date.strftime('%Y%m%d')}_{max_depth_3d}_{view_mode}"
+)
 
 # ============================================================
 # VERTICAL PROFILE
