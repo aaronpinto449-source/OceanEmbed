@@ -181,7 +181,7 @@ def run_oceanembed_inference(
     # --------------------------------------------------------
 
     day = input_dataset.sel(
-        time=np.datetime64(selected_date)
+        time=np.datetime64(selected_date), method="nearest"
     )
 
     X = np.stack(
@@ -451,7 +451,7 @@ st.success(
 # ============================================================
 
 day = prediction.sel(
-    time=np.datetime64(selected_date)
+    time=np.datetime64(selected_date), method="nearest"
 )
 
 field = day.sel(
@@ -752,7 +752,7 @@ st.caption(
 # ------------------------------------------------------------
 
 input_day = inputs.sel(
-    time=np.datetime64(selected_date)
+    time=np.datetime64(selected_date), method="nearest"
 )
 
 
